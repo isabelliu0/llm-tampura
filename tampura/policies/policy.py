@@ -89,6 +89,7 @@ class Policy:
         self.config = config
         self.problem_spec = problem_spec
         self.print_options = config["print_options"].split(",")
+        self.trajectory_logger = None  # Will be set by run_planner.py if data collection is enabled
 
     def get_action(self, belief: Belief, store: AliasStore) -> Tuple[Action, Dict, AliasStore]:
         raise NotImplementedError
@@ -138,6 +139,19 @@ class Policy:
 
             a_bp = bp.abstract(store)
             history.add(s, b, a_b, action, observation, reward, info, store, time.time() - st)
+
+            if self.trajectory_logger is not None:
+                pddl_files = info.get("pddl_files", {})
+                self.trajectory_logger.log_timestep(
+                    abstract_belief=a_b,
+                    observation=observation,
+                    action=action,
+                    reward=reward,
+                    store=store,
+                    next_abstract_belief=a_bp,
+                    domain_file=pddl_files.get("domain_file"),
+                    problem_file=pddl_files.get("problem_file"),
+                )
 
             reward = env.problem_spec.get_reward(a_bp, store)
             if "o" in self.print_options:

@@ -453,7 +453,7 @@ def policy_search(
     config: Dict[str, Any],
     save_dir: str,
     last_action: Action = None,
-) -> Tuple[AbstractTransitionModel, AbstractRewardModel, Dict[AbstractBelief, List[Belief]], bool]:
+) -> Tuple[AbstractTransitionModel, AbstractRewardModel, Dict[AbstractBelief, List[Belief]], bool, Dict[str, str]]:
     """Sample trajectories according to the provided abstract policy."""
 
     a_b0 = b0.abstract(store)
@@ -471,6 +471,10 @@ def policy_search(
     (domain_file, problem_file) = spec.save_pddl(
         a_b0, default_cost=default_cost, folder=save_dir, store=store
     )
+    pddl_files = {
+        "domain_file": domain_file,
+        "problem_file": problem_file,
+    }
 
     output_sas_file = symk_translate(domain_file, problem_file)
 
@@ -483,7 +487,7 @@ def policy_search(
     plans = symk_search(output_sas_file, config)
 
     if len(plans) == 0:
-        return F, R, belief_map, False
+        return F, R, belief_map, False, pddl_files
     else:
         rollouts = [plan_to_rollout(spec, plan, a_b0, store) for plan in plans]
 
@@ -539,10 +543,10 @@ def policy_search(
 
         F.update(mi_a, mi_ab, ab_p_belief_set)
 
-    # Visualize the exploration MDP with the last action taken
-    mdp_viz_file = os.path.join(save_dir, "exploration_mdp.png")
-    visualize_exploration_mdp(
-        F, R, cost_modifiers, mdp_viz_file, a_b0, config["learning_strategy"], last_action, newly_explored_edges
-    )
+    # # Visualize the exploration MDP with the last action taken
+    # mdp_viz_file = os.path.join(save_dir, "exploration_mdp.png")
+    # visualize_exploration_mdp(
+    #     F, R, cost_modifiers, mdp_viz_file, a_b0, config["learning_strategy"], last_action, newly_explored_edges
+    # )
 
-    return F, R, belief_map, True
+    return F, R, belief_map, True, pddl_files
