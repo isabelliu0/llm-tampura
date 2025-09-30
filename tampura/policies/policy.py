@@ -91,7 +91,7 @@ class Policy:
         self.print_options = config["print_options"].split(",")
         self.trajectory_logger = None  # Will be set by run_planner.py if data collection is enabled
 
-    def get_action(self, belief: Belief, store: AliasStore) -> Tuple[Action, Dict, AliasStore]:
+    def get_action(self, belief: Belief, store: AliasStore, last_observation=None) -> Tuple[Action, Dict, AliasStore]:
         raise NotImplementedError
 
     def rollout(
@@ -103,6 +103,7 @@ class Policy:
 
         history = RolloutHistory(self.config)
         st = time.time()
+        last_observation = None
         for step in range(self.config["max_steps"]):
             s = copy.deepcopy(env.state)
             a_b = b.abstract(store)
@@ -118,7 +119,7 @@ class Policy:
             if "r" in self.print_options:
                 logging.info("Reward: " + str(reward))
 
-            action, info, store = self.get_action(b, store)
+            action, info, store = self.get_action(b, store, last_observation=last_observation)
 
             if "a" in self.print_options:
                 if action.detailed_name:
@@ -139,6 +140,7 @@ class Policy:
 
             a_bp = bp.abstract(store)
             history.add(s, b, a_b, action, observation, reward, info, store, time.time() - st)
+            last_observation = observation
 
             if self.trajectory_logger is not None:
                 pddl_files = info.get("pddl_files", {})

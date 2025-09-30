@@ -6,7 +6,7 @@ import os
 import random
 from collections import defaultdict
 from itertools import product
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 import numpy as np
 
@@ -453,6 +453,8 @@ def policy_search(
     config: Dict[str, Any],
     save_dir: str,
     last_action: Action = None,
+    llm_generator: Any = None,
+    last_observation: Optional[Dict[str, Any]] = None,
 ) -> Tuple[AbstractTransitionModel, AbstractRewardModel, Dict[AbstractBelief, List[Belief]], bool, Dict[str, str]]:
     """Sample trajectories according to the provided abstract policy."""
 
@@ -476,20 +478,40 @@ def policy_search(
         "problem_file": problem_file,
     }
 
-    output_sas_file = symk_translate(domain_file, problem_file)
+    # Choose planning backend: LLM or symK
+    use_llm = llm_generator is not None and config.get("use_llm_planner", False)
 
-    output_sas_file = inject_action_costs(
-        output_sas_file,
-        a_b0,
-        action_costs=cost_modifiers,
-        store=store,
-    )
-    plans = symk_search(output_sas_file, config)
+    if use_llm:
+        logging.info("[PolicySearch] Using LLM for plan generation")
+        obs_dict = last_observation if last_observation is not None else {}
+        plans_as_actions = llm_generator.generate_plans(
+            current_abstract_belief=a_b0,
+            last_observation=obs_dict,
+            reward=R.reward.get(a_b0, 0.0),
+        )
+        if len(plans_as_actions) == 0:
+            logging.warning("[PolicySearch] LLM generated 0 plans, fallback to symK")
+            use_llm = False
+        else:
+            rollouts = [plan_to_rollout(spec, plan, a_b0, store) for plan in plans_as_actions]
+            logging.info(f"[PolicySearch] LLM generated {len(rollouts)} rollouts")
 
-    if len(plans) == 0:
-        return F, R, belief_map, False, pddl_files
-    else:
-        rollouts = [plan_to_rollout(spec, plan, a_b0, store) for plan in plans]
+    if not use_llm:
+        logging.info("[PolicySearch] Using symK for plan generation")
+        output_sas_file = symk_translate(domain_file, problem_file)
+
+        output_sas_file = inject_action_costs(
+            output_sas_file,
+            a_b0,
+            action_costs=cost_modifiers,
+            store=store,
+        )
+        plans = symk_search(output_sas_file, config)
+
+        if len(plans) == 0:
+            return F, R, belief_map, False, pddl_files
+        else:
+            rollouts = [plan_to_rollout(spec, plan, a_b0, store) for plan in plans]
 
     newly_explored_edges = set()
     for step in range(config["batch_size"]):

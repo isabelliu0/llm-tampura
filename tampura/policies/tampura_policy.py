@@ -67,9 +67,11 @@ class TampuraPolicy(Policy):
         self.t = 0
         self.last_executed_action: Action = None
         self.current_pddl_files: Dict[str, str] = {}
+        self.llm_generator = None
+        self.last_observation_dict: Dict[str, Any] = None
 
     def get_action(
-        self, belief: Belief, store: AliasStore
+        self, belief: Belief, store: AliasStore, last_observation: Optional[Dict[str, Any]] = None
     ) -> Tuple[Action, Dict[str, Any], AliasStore]:
         ab = belief.abstract(store)
 
@@ -134,6 +136,8 @@ class TampuraPolicy(Policy):
                         self.config,
                         save_dir=pddl_save_dir,
                         last_action=self.last_executed_action,
+                        llm_generator=self.llm_generator,
+                        last_observation=last_observation,
                     )
 
                     if len(result) == 5:
