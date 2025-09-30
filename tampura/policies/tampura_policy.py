@@ -66,9 +66,12 @@ class TampuraPolicy(Policy):
         self.belief_map: Dict[AbstractBelief, List[Belief]] = defaultdict(list)
         self.t = 0
         self.last_executed_action: Action = None
+        self.current_pddl_files: Dict[str, str] = {}
+        self.llm_generator = None
+        self.last_observation_dict: Dict[str, Any] = None
 
     def get_action(
-        self, belief: Belief, store: AliasStore
+        self, belief: Belief, store: AliasStore, last_observation: Optional[Dict[str, Any]] = None
     ) -> Tuple[Action, Dict[str, Any], AliasStore]:
         ab = belief.abstract(store)
 
@@ -122,7 +125,8 @@ class TampuraPolicy(Policy):
             with tqdm(total=self.config["num_samples"]) as pbar:
                 while n < self.config["num_samples"]:
                     # Set up dynamics and reward based on symbolic effects
-                    self.F, self.R, self.belief_map, plan_success = policy_search(
+                    pddl_save_dir = os.path.join(self.config["save_dir"], f"pddl_t={self.t}_s={n}")
+                    result = policy_search(
                         belief,
                         self.problem_spec,
                         self.F,
@@ -130,9 +134,21 @@ class TampuraPolicy(Policy):
                         self.belief_map,
                         store,
                         self.config,
-                        save_dir=os.path.join(self.config["save_dir"], f"pddl_t={self.t}_s={n}"),
+                        save_dir=pddl_save_dir,
                         last_action=self.last_executed_action,
+                        llm_generator=self.llm_generator,
+                        last_observation=last_observation,
                     )
+
+                    if len(result) == 5:
+                        self.F, self.R, self.belief_map, plan_success, pddl_files = result
+                        # Store PDDL file paths for data collection (only from first successful iteration)
+                        if n == 0 and pddl_files:
+                            self.current_pddl_files = pddl_files
+                    else:
+                        self.F, self.R, self.belief_map, plan_success = result
+                        self.current_pddl_files = {}
+
                     if not plan_success:
                         break
 
@@ -171,8 +187,7 @@ class TampuraPolicy(Policy):
 
         self.envelope.append((ab, selected_action))
 
-        # Store this as the last executed action for next visualization
         self.last_executed_action = selected_action
 
         self.t += 1
-        return selected_action, {"F": self.F}, store
+        return selected_action, {"F": self.F, "pddl_files": self.current_pddl_files}, store
