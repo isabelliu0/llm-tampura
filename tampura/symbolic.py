@@ -4,7 +4,7 @@ import copy
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 ####################################
 
@@ -274,6 +274,7 @@ class Predicate:
 class Action:
     name: str = "default-action"
     args: List[Any] = field(default_factory=lambda: [])
+    detailed_name: Optional[str] = None
 
     def __hash__(self):
         return hash(tuple([self.name] + list(self.args)))

@@ -65,6 +65,7 @@ class TampuraPolicy(Policy):
         self.R = AbstractRewardModel()
         self.belief_map: Dict[AbstractBelief, List[Belief]] = defaultdict(list)
         self.t = 0
+        self.last_executed_action: Action = None
 
     def get_action(
         self, belief: Belief, store: AliasStore
@@ -130,6 +131,7 @@ class TampuraPolicy(Policy):
                         store,
                         self.config,
                         save_dir=os.path.join(self.config["save_dir"], f"pddl_t={self.t}_s={n}"),
+                        last_action=self.last_executed_action,
                     )
                     if not plan_success:
                         break
@@ -168,6 +170,9 @@ class TampuraPolicy(Policy):
                 selected_action = random.choice(applicable_actions)
 
         self.envelope.append((ab, selected_action))
+
+        # Store this as the last executed action for next visualization
+        self.last_executed_action = selected_action
 
         self.t += 1
         return selected_action, {"F": self.F}, store

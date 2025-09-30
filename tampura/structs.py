@@ -189,6 +189,9 @@ class AbstractBeliefSet:
     outcome_successes: Dict[AbstractBelief, int] = field(default_factory=lambda: {})
     outcome_attempts: Dict[AbstractBelief, int] = field(default_factory=lambda: {})
 
+    # New field to track how many times each transition was sampled during learning
+    sampling_attempts: Dict[AbstractBelief, int] = field(default_factory=lambda: {})
+
     def get_all_counts(self, ab: AbstractBelief):
         return (
             self.get_count(self.ab_counts, ab),
@@ -201,6 +204,7 @@ class AbstractBeliefSet:
             list(self.ab_counts.keys())
             + list(self.outcome_successes.keys())
             + list(self.outcome_attempts.keys())
+            + list(self.sampling_attempts.keys())
         )
 
     def total_count(self):
@@ -229,6 +233,11 @@ class AbstractBeliefSet:
             if ab not in self.outcome_successes:
                 self.outcome_successes[ab] = 0
             self.outcome_successes[ab] += belief_set.outcome_successes[ab]
+
+        for ab, count in belief_set.sampling_attempts.items():
+            if ab not in self.sampling_attempts:
+                self.sampling_attempts[ab] = 0
+            self.sampling_attempts[ab] += belief_set.sampling_attempts[ab]
 
     def add(self, ab: AbstractBelief, b: Belief, count: int):
         if not (ab in self.ab_counts):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 import random
 from collections import defaultdict
 from itertools import product
@@ -47,6 +48,177 @@ from tampura.symbolic import (
 )
 
 MAX_COST = 1000
+
+
+def visualize_exploration_mdp(
+    F: AbstractTransitionModel,
+    R: AbstractRewardModel,
+    cost_modifiers: Dict,
+    save_file: str,
+    a_b0: AbstractBelief,
+    learning_strategy: str,
+    last_action: Action = None,
+    newly_explored_edges: set = None,
+):
+    """
+    Visualize the complete abstract belief graph that symK planner sees:
+    - All abstract belief states as nodes
+    - All possible actions as edges with Bayes optimistic costs
+    - Exploration statistics (attempts, successes, probabilities)
+    - Complete state space visible to the planner
+    """
+    import pygraphviz as pgv
+
+    # Create directed graph
+    graph = pgv.AGraph(directed=True, strict=False, rankdir="TB", size="20,16!")
+    last_action_str = f"{last_action.name}({', '.join(map(str, last_action.args))})" if last_action else "None"
+    graph.graph_attr.update(
+        dpi=600,
+        fontsize=10,
+        labelloc="t",
+        label=(
+            f"Abstract Belief Graph (symK Planning View)\\n"
+            f"Last Action: {last_action_str}"
+        )
+    )
+
+    # Collect all abstract beliefs from the transition model and rewards
+    all_beliefs = set([a_b0])
+    for action, belief_dict in F.effects.items():
+        for belief, belief_set in belief_dict.items():
+            all_beliefs.add(belief)
+            for next_belief in belief_set.all_ab():  # Get all abstract beliefs
+                all_beliefs.add(next_belief)
+
+    # Also add any beliefs that have rewards but might not be in transitions yet
+    for belief in R.reward.keys():
+        all_beliefs.add(belief)
+
+    def belief_str(ab):
+        """Create a readable string representation of abstract belief"""
+        # Show first few predicates, truncated for readability
+        items_str = ", ".join([str(item)[:25] for item in list(ab.items)[:4]])
+        return f"S{str(hash(ab))[:5]}\\n{{{items_str}}}"
+
+    # Add belief state nodes
+    for belief in all_beliefs:
+        belief_id = f"belief_{hash(belief)}"
+        label = belief_str(belief)
+
+        # Add reward information if non-zero
+        reward_val = R.reward.get(belief, 0)
+        if reward_val != 0:
+            label += f"\\nR={reward_val:.3f}"
+
+        # Color nodes based on reward and initial state
+        if belief == a_b0:
+            node_color = "#87CEEB"
+            label += "\\n(Initial)"
+        elif reward_val > 0:
+            node_color = "#98FB98"
+        elif reward_val < 0:
+            node_color = "#FFB6C1"
+        else:
+            node_color = "#E0E0E0"
+
+        graph.add_node(belief_id, label=label, shape="box",
+                      style="filled", fillcolor=node_color, fontsize=7)
+
+    # Add action edges with comprehensive exploration information
+    for action, belief_dict in F.effects.items():
+        for source_belief, belief_set in belief_dict.items():
+            source_id = f"belief_{hash(source_belief)}"
+            total_observed = sum(belief_set.ab_counts.values())
+
+            # Create edges from source to each possible target belief
+            for target_belief in belief_set.all_ab():
+                target_id = f"belief_{hash(target_belief)}"
+
+                # Get exploration statistics
+                observed_count = belief_set.ab_counts.get(target_belief, 0)
+                sampling_count = belief_set.sampling_attempts.get(target_belief, 0)
+                success_count = belief_set.outcome_successes.get(target_belief, 0)
+                attempt_count = belief_set.outcome_attempts.get(target_belief, 0)
+
+                # Calculate probability from observations
+                if total_observed > 0:
+                    prob = observed_count / total_observed
+                else:
+                    prob = 0
+
+                # Calculate success rate
+                if attempt_count > 0:
+                    success_rate = success_count / attempt_count
+                else:
+                    success_rate = 0
+
+                # Create comprehensive edge label with action name and args
+                action_str = f"{action.name}({', '.join(map(str, action.args))})"
+                edge_label = f"{action_str}"
+
+                # Find the Bayes optimistic cost for this action from this belief
+                action_cost = None
+                for cost_modifier, cost in cost_modifiers.items():
+                    if (cost_modifier.action == action and
+                        set(cost_modifier.pre_facts) == set(source_belief.items)):
+                        action_cost = cost
+                        break
+
+                if action_cost is not None:
+                    edge_label += f"\\nCost: {action_cost}"
+
+                # Add exploration statistics - now showing sampling attempts and success rates
+                edge_label += f"\\np={prob:.3f}, s={sampling_count}"
+                if attempt_count > 0:
+                    edge_label += f"\\nsucc={success_count}/{attempt_count} ({success_rate:.2f})"
+
+                # Check if this edge was newly explored
+                edge_key = (action, source_belief, target_belief)
+                is_newly_explored = newly_explored_edges and edge_key in newly_explored_edges
+
+                # Color and style edges based on sampling frequency and confidence
+                if sampling_count == 0:
+                    # Never sampled transitions
+                    edge_color = "lightgray"
+                    edge_style = "dotted"
+                    penwidth = 1
+                elif sampling_count <= 2:
+                    edge_color = "gray"
+                    edge_style = "dashed"
+                    penwidth = 1
+                elif sampling_count <= 5:
+                    edge_color = "orange"
+                    edge_style = "solid"
+                    penwidth = 2
+                else:
+                    edge_color = "darkgreen"
+                    edge_style = "bold"
+                    penwidth = 3
+
+                # Highlight newly explored edges with bright colors
+                if is_newly_explored:
+                    edge_color = "purple"
+                    edge_style = "bold"
+                    penwidth = max(penwidth, 4)
+
+                # Highlight high-cost actions with red edges
+                if action_cost is not None and action_cost > 50:
+                    edge_color = "red"
+
+                # Scale line thickness based on sampling frequency
+                if sampling_count > 10:
+                    penwidth = min(penwidth + sampling_count // 10, 8)
+
+                # Only show edges that have been sampled or have observed outcomes
+                if sampling_count > 0 or observed_count > 0:
+                    graph.add_edge(source_id, target_id,
+                                  label=edge_label,
+                                  color=edge_color,
+                                  style=edge_style,
+                                  fontsize=6,
+                                  penwidth=penwidth)
+
+    graph.draw(save_file, prog="dot")
 
 
 def normalize(F: AbstractTransitionModel) -> AbstractTransitionModel:
@@ -108,7 +280,7 @@ def plan_to_rollout(
 
     for unprocessed_action in plan:
         action_name, veffect_str = unprocessed_action.name.split(ACTION_EXT)
-        action = Action(action_name, unprocessed_action.args)
+        action = Action(action_name, unprocessed_action.args, detailed_name=unprocessed_action.name)
         s = spec.get_action_schema(action.name)
         effect_items = copy.deepcopy(s.effects)
         if len(veffect_str) > 0:
@@ -280,6 +452,7 @@ def policy_search(
     store: AliasStore,
     config: Dict[str, Any],
     save_dir: str,
+    last_action: Action = None,
 ) -> Tuple[AbstractTransitionModel, AbstractRewardModel, Dict[AbstractBelief, List[Belief]], bool]:
     """Sample trajectories according to the provided abstract policy."""
 
@@ -292,6 +465,8 @@ def policy_search(
     cost_modifiers = compute_cost_modifiers(
         spec, F, config["learning_strategy"], config["gamma"], store
     )
+
+    os.makedirs(save_dir, exist_ok=True)
 
     (domain_file, problem_file) = spec.save_pddl(
         a_b0, default_cost=default_cost, folder=save_dir, store=store
@@ -312,6 +487,7 @@ def policy_search(
     else:
         rollouts = [plan_to_rollout(spec, plan, a_b0, store) for plan in plans]
 
+    newly_explored_edges = set()
     for step in range(config["batch_size"]):
         rollout = random.choice(rollouts)
         if len(rollout.transitions) == 0:
@@ -356,7 +532,17 @@ def policy_search(
             R.reward[ab_p] = spec.get_reward(ab_p, store)
 
         ab_p_belief_set.outcome_attempts[mi_ab_p] = ab_p_belief_set.total_count()
+        ab_p_belief_set.sampling_attempts[mi_ab_p] = 1
+
+        # Track newly explored edges for visualization
+        newly_explored_edges.add((mi_a, mi_ab, mi_ab_p))
 
         F.update(mi_a, mi_ab, ab_p_belief_set)
+
+    # Visualize the exploration MDP with the last action taken
+    mdp_viz_file = os.path.join(save_dir, "exploration_mdp.png")
+    visualize_exploration_mdp(
+        F, R, cost_modifiers, mdp_viz_file, a_b0, config["learning_strategy"], last_action, newly_explored_edges
+    )
 
     return F, R, belief_map, True

@@ -120,7 +120,11 @@ class Policy:
             action, info, store = self.get_action(b, store)
 
             if "a" in self.print_options:
-                logging.info("Action: " + str(action))
+                if action.detailed_name:
+                    action_str = f"{action.detailed_name}({', '.join(map(str, action.args))})"
+                else:
+                    action_str = str(action)
+                logging.info("Action: " + action_str)
 
             if action.name == "no-op":
                 bp = copy.deepcopy(b)
