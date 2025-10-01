@@ -2,6 +2,7 @@ from tampura.config.config import register_planner
 
 from .contingent_policy import ContingentPolicy
 from .dqn_policy import DQNPolicy
+from .llm_closed_loop_policy import LLMClosedLoopPolicy
 from .policy import Policy, RolloutHistory
 from .random_policy import RandomPolicy
 from .replay_policy import ReplayPolicy
@@ -16,3 +17,4 @@ register_planner("tampura_policy", TampuraPolicy)
 register_planner("replay_policy", ReplayPolicy)
 register_planner("dqn_policy", DQNPolicy)
 register_planner("contingent_policy", ContingentPolicy)
+register_planner("llm_closed_loop_policy", LLMClosedLoopPolicy)
