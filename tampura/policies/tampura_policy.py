@@ -4,7 +4,7 @@ import logging
 import os
 import random
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 from tqdm import tqdm  # type: ignore
 

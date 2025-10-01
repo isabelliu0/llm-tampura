@@ -87,7 +87,7 @@ class LLMClosedLoopPolicy(Policy):
         try:
             logging.info("[LLMClosedLoopPolicy] Synthesizing closed-loop policy function...")
             synthesized_fn = synthesize_python_function_with_llm(
-                function_name="get_next_action",
+                function_name="get_action",
                 model=self.llm,
                 query=query,
                 reprompt_checks=reprompt_checks,
@@ -183,8 +183,59 @@ You will be given:
 1. A PDDL domain defining predicates, actions, and their effects
 2. A PDDL problem defining the initial state and goal
 3. Training examples showing successful execution traces
+4. Environment-specific data structures
 
 Your goal is to generate a Python function that takes the current state (abstract belief, last observation, last action, reward) and returns the SINGLE BEST action to take next.
+
+## Environment Data Structures
+
+The SLAM 2D environment uses these data structures for observations:
+
+```python
+@dataclass
+class Pose:
+    x: float  # x-coordinate in environment (0 to 10)
+    y: float  # y-coordinate in environment (0 to 10)
+    theta: float  # orientation in radians
+
+@dataclass
+class Attachment:
+    target: str  # Name of the target object being held
+    robot_T_target: Pose  # Relative pose of target w.r.t. robot frame
+
+@dataclass
+class SlamObservation:
+    regions_in: List[str] = field(default_factory=lambda: [])
+    holding: str = None
+    initial_state: SlamState = None
+    primitives: List[Any] = field(default_factory=lambda: [])
+    robot_pose: Pose = None
+    collision: bool = False
+
+@dataclass
+class SlamState(State):
+    robot: Region
+    obstacles: List[Region] = field(default_factory=lambda: [])
+    beacons: List[Region] = field(default_factory=lambda: [])
+    targets: List[Region] = field(default_factory=lambda: [])
+    corners: List[Region] = field(default_factory=lambda: [])
+    attachments: List[Attachment] = field(default_factory=lambda: [])
+    goal: str = None
+    start: str = None
+    in_collision: bool = False
+
+    @property
+    def regions(self):
+        return self.beacons + self.corners + [self.goal] + [self.start]
+
+    @property
+    def subtypes(self):
+        return (
+            ["beacon"] * len(self.beacons)
+            + ["corner"] * len(self.corners)
+            + ["goal", "start"]
+        )
+```
 
 ## Training Examples
 
