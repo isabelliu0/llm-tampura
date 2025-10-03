@@ -14,14 +14,18 @@ from tampura.policies.policy import Policy
 from tampura.spec import ProblemSpec
 from tampura.structs import AbstractBelief, Action, AliasStore, Belief
 from tampura.solvers.llm.training_data_formatter import format_trajectory_for_llm
+from tampura_environments.slam_collect.env import SlamObservation
 
 try:
     from prpl_llm_utils.cache import SQLite3PretrainedLargeModelCache
     from prpl_llm_utils.code import (
+        FunctionOutputRepromptCheck,
+        SynthesizedPythonFunction,
         SyntaxRepromptCheck,
-        synthesize_python_function_with_llm,
+        parse_python_code_from_text,
     )
     from prpl_llm_utils.models import OpenAIModel
+    from prpl_llm_utils.reprompting import query_with_reprompts
     from prpl_llm_utils.structs import Query
 except ImportError:
     logging.warning("prpl-llm-utils not available.")
@@ -84,13 +88,68 @@ class LLMClosedLoopPolicy(Policy):
         query = Query(prompt)
         reprompt_checks = [SyntaxRepromptCheck()]
 
-        try:
-            logging.info("[LLMClosedLoopPolicy] Synthesizing closed-loop policy function...")
-            synthesized_fn = synthesize_python_function_with_llm(
+        def check_action_format(output):
+            if not isinstance(output, dict):
+                return False
+            if "name" not in output:
+                return False
+            if "args" in output and not isinstance(output["args"], list):
+                return False
+            return True
+
+        test_action_dict = {"name": "move", "args": ["o1", "loc1"]}
+        test_obs = SlamObservation(
+            regions_in=["region1"],
+            holding=None,
+            robot_pose=None,
+            collision=False
+        )
+        test_inputs = [
+            (["(at o1 loc1)"], None, None, 0.0),  # Simple belief state, no obs
+            (["(at o1 loc1)"], test_obs, test_action_dict, 0.0),  # Full state
+        ]
+        output_check_fns = [check_action_format] * len(test_inputs)
+
+        reprompt_checks.append(
+            FunctionOutputRepromptCheck(
                 function_name="get_action",
+                inputs=test_inputs,
+                output_check_fns=output_check_fns,
+                function_timeout=5.0,
+            )
+        )
+
+        try:
+            response = query_with_reprompts(
                 model=self.llm,
                 query=query,
                 reprompt_checks=reprompt_checks,
+                max_attempts=5,
+            )
+
+            reprompt_log_path = Path(self.config["save_dir"]) / "llm_reprompt_log.txt"
+            with open(reprompt_log_path, "w") as f:
+                f.write("=== REPROMPT LOG ===\n\n")
+                if "queries" in response.metadata and "responses" in response.metadata:
+                    queries = response.metadata["queries"]
+                    responses = response.metadata["responses"]
+                    for i, (q, r) in enumerate(zip(queries, responses)):
+                        f.write(f"\n{'='*80}\n")
+                        f.write(f"ATTEMPT {i+1}\n")
+                        f.write(f"{'='*80}\n\n")
+                        f.write(f"QUERY:\n{q.prompt}\n\n")
+                        f.write(f"RESPONSE:\n{r.text}\n\n")
+                else:
+                    f.write("No reprompt metadata found\n")
+
+            python_code = parse_python_code_from_text(response.text)
+            if python_code is None:
+                raise RuntimeError("No python code found in final response.")
+
+            synthesized_fn = SynthesizedPythonFunction(
+                function_name="get_action",
+                code_str=python_code,
+                timeout=30.0
             )
 
             self.llm_policy_fn = synthesized_fn
@@ -270,9 +329,9 @@ def get_action(abstract_belief, last_observation, last_action, reward):
 
     Args:
         abstract_belief: List of strings representing current abstract belief
-        last_observation: Dict with keys that may include: regions_in, holding, robot_pose, collision
-        last_action: Dict with "name" and "args" keys representing the last action taken
-        reward: Float representing current reward (positive means goal reached)
+        last_observation: SlamObservation dataclass (or None on first call) with attributes
+        last_action: Dict with "name" (str) and "args" (list of str) or None on first call
+        reward: Float representing current reward
 
     Returns:
         Dict with single action

@@ -5,6 +5,7 @@ from typing import Tuple
 
 from tampura.spec import ProblemSpec
 from tampura.structs import Action, AliasStore, Belief, Observation
+from tampura.symbolic import ACTION_EXT
 
 
 class TampuraEnv:
@@ -57,9 +58,12 @@ class TampuraEnv:
         A reward is calculated based on this new symbolic state, and the
         action effect is returned along with the reward.
         """
+        if ACTION_EXT in action.name:
+            base_action_name = action.name.split(ACTION_EXT)[0]
+        else:
+            base_action_name = action.name
 
-        # Get the symbolic preconditions and effects of the action
-        schema = self.problem_spec.get_action_schema(action.name)
+        schema = self.problem_spec.get_action_schema(base_action_name)
 
         # Update the symbolic state
         self.state, observation = schema.execute_fn(action, belief, self.state, store)
